@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help validate-dataset-ids preview-dataset-site
 
-DATASET ?= dataset.jsonl
+DATASET ?= src/ua_tts_bench/data/dataset.jsonl
 SITE_DIR := _site
 PORT ?= 8000
 

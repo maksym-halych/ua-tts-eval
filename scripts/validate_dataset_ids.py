@@ -38,7 +38,7 @@ def validate(path: Path) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", nargs="?", default="dataset.jsonl", type=Path)
+    parser.add_argument("path", nargs="?", default="src/ua_tts_bench/data/dataset.jsonl", type=Path)
     args = parser.parse_args()
 
     errors = validate(args.path)

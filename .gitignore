@@ -1,1 +1,5 @@
 _site/
+.cache/
+.venv/
+__pycache__/
+dist/
