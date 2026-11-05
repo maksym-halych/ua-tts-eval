@@ -1,6 +1,6 @@
 # ua-tts-bench design
 
-Status: the package and the path changes are implemented. `ua-tts-arena` has not been started.
+Status: the package and the path changes are implemented. `ua-tts-arena` is implemented and runs locally. It is not deployed yet.
 
 ## Overview
 
@@ -10,12 +10,13 @@ The project evaluates Ukrainian text-to-speech models on a fixed dataset, using 
 | ---------------------- | ----------------------- | -------------------------------------------------------- |
 | `ua-tts-bench` package | this repo               | Ships the dataset, generates audio, computes metrics     |
 | `ua-tts-bench` dataset | Hugging Face            | Stores generated audio and metrics, one folder per model |
-| `ua-tts-arena`         | separate repo, HF Space | Human voting and the leaderboard                         |
+| `ua-tts-arena`         | separate repo           | Human voting and the leaderboard                         |
 
 ```
 model repo + adapter script
    ├─ generate() ─▶ audio + manifest.json
    ├─ evaluate() ─▶ metrics.json
+   ├─ export_mp3() ─▶ MP3 copies
    └─ hf upload  ─▶ HF dataset ─▶ ua-tts-arena ─▶ votes in Supabase
 ```
 
@@ -23,8 +24,9 @@ Model code never lives in this repo. Only the maintainer adds models to the lead
 
 1. Clone the model's repo.
 2. Install this package there and add an adapter script that subclasses `TtsModel`.
-3. Run the script, which generates audio and computes metrics.
+3. Run the script, which generates audio, computes metrics and makes MP3 copies.
 4. Upload the resulting folder to the HF dataset.
+5. Add the model on the arena's Models admin page. Until then, it isn't available to raters.
 
 ## v1 scope
 
@@ -33,6 +35,7 @@ Model code never lives in this repo. Only the maintainer adds models to the lead
 - Generation from text only, one variant per item
 - WER and CER through a swappable ASR, plus RTF with the hardware recorded
 - Metrics for each file
+- MP3 copies with aligned loudness, for the arena to play
 
 **Left out of v1**
 
@@ -48,6 +51,7 @@ Model code never lives in this repo. Only the maintainer adds models to the lead
 - Created with `uv init --package`, which also picks the build backend
 - Runtime dependencies are light and have no strict version pins, because the package is installed into each model's own environment
 - No optional extras in v1: the ASR runs behind HTTP, so torch is not needed
+- `export_mp3` needs `ffmpeg` on `PATH`. `generate` and `evaluate` don't.
 
 ```bash
 uv pip install git+https://github.com/maksym-halych/ua-tts-bench
@@ -55,7 +59,7 @@ uv pip install git+https://github.com/maksym-halych/ua-tts-bench
 
 ### Public API
 
-The public API is three names: `TtsModel`, `generate` and `evaluate`.
+The public API is four names: `TtsModel`, `generate`, `evaluate` and `export_mp3`.
 
 ```python
 class TtsModel(ABC):
@@ -71,6 +75,8 @@ class TtsModel(ABC):
 def generate(model: TtsModel) -> Path: ...
 
 def evaluate(folder: Path, asr_base_url: str, asr_model: str) -> None: ...
+
+def export_mp3(folder: Path) -> None: ...
 ```
 
 | Attribute | Meaning                                                                                                                                                                                                      |
@@ -107,6 +113,18 @@ The model receives `text`, never `text_normalized`. Items tagged `numbers`, `abb
 4. Rewrites `metrics.json` completely. Earlier contents are not merged.
 
 An item whose transcription fails is logged and left out of `metrics.json`. If no item succeeds, for example because the ASR is down, `evaluate` raises an error and keeps the existing `metrics.json`.
+
+### `export_mp3(folder)`
+
+Makes the copies the arena plays. The adapter script calls it after `evaluate`, and it can also run on an existing folder without generating again.
+
+1. Reads `manifest.json`. A folder without a manifest is an error, and so is `ffmpeg` missing from `PATH`. Both are checked before any work starts.
+2. Measures each WAV file's loudness and true peak with `ffmpeg`.
+3. Applies one constant gain per clip, aiming for -23 LUFS. The gain is capped so the true peak stays at or below -1 dBTP, so a clip can end up quieter than the target but is never distorted.
+4. Encodes the result at 44.1 kHz and 192 kbps, so every model has the same format.
+5. Replaces `mp3/` completely. Earlier contents are not merged.
+
+A clip shorter than the 400 ms that the measurement needs is measured by repeating it for 3 seconds, and the copy keeps its real length. A short clip can be what the model really produced, so leaving it out would hide a failure from raters. A silent clip is logged and gets no copy. Its WER and CER still count. An item whose conversion fails is logged and left out. If no item succeeds, `export_mp3` raises an error and keeps the existing `mp3/`.
 
 ### ASR
 
@@ -148,9 +166,13 @@ Fields are kept to the minimum. Adding a field later is easy, while removing one
     ├── metrics.json            metrics (fully rewritten by each evaluate)
     ├── adapter.py              copy of the script that ran generate
     ├── bench.log               shared log of generate and evaluate
-    └── audio/
-        ├── a4f076a8e050.wav    WAV PCM16, mono, model's native sample rate
-        ├── 6c33a2c31bc5.wav
+    ├── audio/
+    │   ├── a4f076a8e050.wav    WAV PCM16, mono, model's native sample rate
+    │   ├── 6c33a2c31bc5.wav
+    │   └── ...
+    └── mp3/                    copies for the arena (written by export_mp3)
+        ├── a4f076a8e050.mp3
+        ├── 6c33a2c31bc5.mp3
         └── ...
 ```
 
@@ -238,7 +260,7 @@ Lives in the model's repo and is copied into the folder by `generate`, so the re
 
 ```python
 from holos import load_model
-from ua_tts_bench import TtsModel, evaluate, generate
+from ua_tts_bench import TtsModel, evaluate, export_mp3, generate
 
 
 class HolosTtsModel(TtsModel):
@@ -265,11 +287,12 @@ evaluate(
     asr_base_url="http://127.0.0.1:5092/v1",
     asr_model="parakeet-tdt-0.6b-v3",
 )
+export_mp3(folder)
 ```
 
 ### `bench.log`
 
-`generate` and `evaluate` share one log. `generate` starts it fresh along with the folder, and each `evaluate` appends to it.
+`generate`, `evaluate` and `export_mp3` share one log. `generate` starts it fresh along with the folder, and the other two append to it.
 
 ```
 2026-11-02 14:03:11 INFO  generate a4f076a8e050 ok 0.81s
@@ -277,6 +300,8 @@ evaluate(
 2026-11-02 14:03:40 INFO  generate done: 199 ok, 1 failed
 2026-11-02 14:03:41 INFO  evaluate a4f076a8e050 wer=0.000 cer=0.000
 2026-11-02 14:07:19 INFO  evaluate done: 199 ok, 0 failed
+2026-11-02 14:07:20 WARNING export_mp3 947ec8a6bed1 silent, skipped
+2026-11-02 14:07:31 INFO  export_mp3 done: 198 ok, 1 skipped, 0 failed
 ```
 
 ## Publishing to Hugging Face
@@ -294,26 +319,130 @@ hf upload <user>/ua-tts-bench .cache/ua-tts-bench/holos holos --repo-type datase
 
 ## ua-tts-arena
 
-The arena is a separate repo, deployed as an HF Space. It shares no code with this package. The format of the HF dataset is the contract between them.
+The arena is a separate repo, in the `ua-tts-arena` folder next to this one. It runs locally for now. It shares no code with this package. The format of the HF dataset is the contract between them.
+
+**Reference: TTS Arena**
+
+[TTS Arena](https://github.com/TTS-AGI/TTS-Arena) (Apache 2.0, read at commit `7a0d13a`) is the reference for this app. We don't fork it. We build a much smaller app and reuse what fits, keeping the license notice on anything copied.
+
+Reused from it: Next.js, Tailwind, the wavesurfer.js player, Zod, neutral audio URLs tied to a server-side session, and the leaderboard's `±` display.
+
+| Part              | TTS Arena                                                  | This app                                        |
+| ----------------- | ---------------------------------------------------------- | ----------------------------------------------- |
+| Audio             | Synthesized on request, through a Hono router and adapters | Pre-generated, so no router or adapters         |
+| Text              | About 500k prompts plus custom text                        | The dataset's 200 items, with no custom text    |
+| Vote limit        | Each prompt moves the ranking once                         | One vote per rater for each item and model pair |
+| Database          | Postgres with Drizzle                                      | Supabase with `supabase-js`                     |
+| Sign-in           | Hugging Face, with its own OAuth code                      | Google, through Supabase Auth                   |
+| Abuse protection  | hCaptcha, FingerprintJS, risk scoring, background sweep    | See "Decided" below                             |
+| Listening check   | In the browser                                             | On the server                                   |
+| Leaderboard       | Votes only                                                 | Votes and automatic metrics                     |
+| Admin             | Eight sections, including synthesis monitoring             | Six pages, see "Admin pages" below              |
+| Tables and charts | TanStack Query, TanStack Table, Recharts                   | Plain Next.js pages and tables                  |
+| Docs              | Separate site                                              | None                                            |
+| Processes         | Two services under `supervisord` in one container          | One service, no `supervisord`                   |
 
 **Decided**
 
-- Reads model folders from the HF dataset.
-- Pulls `dataset.jsonl` from this repo's git when the Space starts. Ids are hashes of the text, so a lookup returns either the right text or nothing, and items not found are skipped.
-- Stores votes in a database, most likely Supabase. The Space's server holds the key, and the browser has no direct database access.
-- Offers blind MOS ratings and blind A/B comparisons.
-- Shows a leaderboard with both automatic metrics and voting results.
+- Reads model folders from one configured source: a local folder in development, or the HF dataset when deployed. Both have the same layout, so only the root differs. An optional `HF_TOKEN` on the server allows a private dataset.
+- The set of models isn't fixed, and a new version or checkpoint gets a new folder. Models are registered in the database. Uploading a folder doesn't make a model available: an admin has to add it on the Models page, and the app checks that the folder is complete.
+- Pulls `dataset.jsonl` from this repo's git. Ids are hashes of the text, so a lookup returns either the right text or nothing, and items not found are skipped.
+- Built with Next.js and Tailwind, using Bun. App code avoids Bun-only APIs, so it can also run on Node.js. Audio plays through wavesurfer.js.
+- Pages for raters are available in English and Ukrainian, and admin pages are in English only. Raters' Ukrainian isn't checked.
+- Checks requests to the server and files from the model folders with Zod.
+- Stores votes in Supabase, queried with `supabase-js`, with no ORM. The app's server holds the key, and the browser has no direct database access.
+- Raters sign in with a Google account through Supabase Auth.
+- No captcha or device fingerprinting in v1. Protection comes from sign-in, a unique constraint on rater, item and model pair, a server-side listening check, a per-rater rate limit, and the Raters admin page.
+- No separate docs site.
+- Offers A/B comparisons, where raters must choose which sample sounds more natural. There's no tie option. MOS, if added later, would be a separate tab.
+- Picks a random item and two random active models for each comparison, using only items where both models have an MP3 copy and skipping combinations the rater has already voted on.
+- Ranks models with Bradley–Terry, sorted by the lower confidence bound, as in TTS Arena. Paused models' votes stay in the fit, so pausing a model doesn't shift the others' ratings.
+- The leaderboard opens in rank order. A rater can sort by rating, win rate, WER or CER with the column headings, and the best value comes first. Models with no value come last. The sort key is in the URL (`?sort=wer`). The rank number stays with the model in each order.
+- The public leaderboard lists every active model regardless of vote count, with its voting results and average WER and CER. Paused models appear only in admin. The app averages `metrics.json` itself, because the package doesn't aggregate metrics.
 - Serves audio through its server under neutral names, so the browser never sees a path containing the model's name.
-- Aligns loudness when playing audio to raters, because a louder sample tends to win A/B comparisons. Stored audio is not changed.
+- Plays the MP3 copies made by `export_mp3`, because a louder sample tends to win A/B comparisons. Nothing is processed per request. On the two current models, a target of -16 LUFS would push over half the clips above -1 dBTP, and -23 LUFS pushes none. TTS Arena's single-pass `loudnorm` isn't used, because it adjusts the level dynamically, which alters the audio being judged.
 
-**Still to design**
+**Configuration**
 
-- The rating aspects. Speaker similarity doesn't apply without cloning, and only 6 items are tagged `emotion`.
-- The ranking method for A/B votes
-- Quality control for raters
-- The database schema and the voting interface
-- How metrics are aggregated
-- Whether the HF dataset is public or private
+- `MODELS_SOURCE` is the one configured source. Its value is a local path or `hf://datasets/<user>/<name>`.
+- `DATASET_SOURCE` is the location of `dataset.jsonl`, as a local path or a URL. The value for a deployment is the raw GitHub URL of the file in this repo.
+- The app reads `metrics.json` and the dataset again after a maximum of five minutes.
+
+**Stack details**
+
+- Bun is the package manager, the test runner and the default runtime. The app was tested on the Bun runtime in development and in production, and on Node.js in development.
+- TypeScript stays at version 6, because `typescript-eslint` doesn't support version 7 yet.
+- The translations are a small dictionary in the code, with no library. A cookie stores the language. With no cookie, the app uses Ukrainian if the browser prefers it, and otherwise English.
+- The auth server of Supabase runs through the app's server. The browser has no Supabase key, so the session cookies are `httpOnly`.
+
+**Local sign-in**
+
+A local form signs in with only an email address, so local work doesn't need Google credentials. It is available only if `LOCAL_SIGN_IN=true` and `SUPABASE_URL` points to this computer. It can't turn on with a hosted database.
+
+An admin address must be confirmed, because an address that isn't confirmed could belong to someone else. The Email provider of a hosted project should be off.
+
+**Database schema**
+
+| Table      | Purpose                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `models`   | Registered models. `name` is the folder name. `item_ids` lists the items with an MP3 copy when the model was added. `paused_at` is set for a paused model. |
+| `raters`   | One row per rater who opened a comparison: Supabase Auth id, email address and exclusion data. There is no foreign key to `auth.users`, so votes stay if an account is deleted. |
+| `rounds`   | The open comparison of each rater. `rater_id` is unique, so a rater has at most one. The row is the only link between the neutral audio URLs and the model names. It is deleted after the vote. |
+| `votes`    | `rater_id`, `item_id`, `winner`, `loser`, `chosen_side`, `decision_ms`, `models_shown`, and exclusion data. A unique index on rater, item and both models in either order allows one vote per combination. |
+| `settings` | One row with the two admin settings.                                                                                     |
+
+- The views `counted_votes`, `pair_tallies`, `item_tallies` and `daily_tallies` hold only the votes that count. They run with the rights of the caller.
+- Excluding a rater sets a field on `raters`, not on each vote. So later votes of that rater are also excluded, and restoring a rater doesn't restore a vote that was excluded separately.
+- Every table has row level security with no policies, and the `anon` and `authenticated` roles have no grants. Only the secret key reaches the data.
+
+**Voting flow**
+
+1. The page asks the server for a round. If the rater has an open round, the server returns the same round. A reload does not change the samples.
+2. A new round is one random choice among all combinations of item and active model pair that are left for the rater. The side of each model is also random. If nothing is left, the page says that the rater rated every comparison.
+3. The server sends two audio URLs of the form `/api/rounds/<id>/audio/a`. Only the rater of the round can get them. The server records when it first sent each clip.
+4. The page plays A, then B the first time. A rater can replay or pause each clip. Starting a clip stops the other.
+5. The vote buttons turn on when each clip has played for 3 seconds, or for its full length if it is shorter. This value comes from TTS Arena.
+6. The server repeats the check. It accepts a vote only if it sent both clips, and if the required time passed since it sent the later clip. The required time is the sum of the two values from step 5, from `duration_s` in `metrics.json`.
+7. The server allows 15 votes per rater per minute. It records the vote, deletes the round, and returns the model names if the setting allows it.
+
+- Before the vote, a rater can skip the sentence. The server deletes the round and starts a new one with a different item. If no other item is left, the server shows the skipped item again. The server records no vote and does not store the skip, and the skipped comparison can appear again later. There is no limit on skips.
+- A skip lets a rater avoid a comparison, so a rater can select the comparisons that get a vote. The model names stay hidden, but a rater can recognize a voice. The app can not measure this effect, because it does not store skips.
+- An open round expires after one hour. The server also replaces a round if one of its models is paused.
+- If a clip is missing from the source, the server deletes the round, and the page offers a new one. Otherwise the rater would be stuck, because the listening check could never pass.
+- The listening check is a lower limit on time. It can't prove that a rater listened.
+
+**Results**
+
+- A model with no votes goes last on the leaderboard and shows no rating. Its zero-width interval at the center would otherwise place it above models with real results.
+- The fit keeps the small prior from TTS Arena: two virtual games per model, half of them won. So one win doesn't give an infinite rating.
+- Agreement on the Raters page compares each vote with the majority of the other raters on the same item and pair. A tie or no other votes gives no result for that vote.
+- The CSV has rater ids and no email addresses, so the file can be shared.
+
+**Admin pages**
+
+Access is limited to an `ADMIN_USERS` list of email addresses, checked on the server for every page and action. Admins can also vote.
+
+| Page     | Shows                                                                                     | Actions                                            |
+| -------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Overview | Total votes and raters, votes per day, model pairs and items that still need votes        | None                                               |
+| Models   | Registered models and their status, plus folders not added yet                            | Add a model, pause or resume a model               |
+| Results  | Each model's rating with `±`, win rate and automatic metrics, and a head-to-head grid     | None                                               |
+| Raters   | Each rater's vote count, typical decision time, A/B split and agreement with the majority | Exclude or restore all of a rater's votes          |
+| Votes    | Votes, filterable by rater, model and item                                                | Exclude or restore a vote, export all votes as CSV |
+| Settings | Current settings                                                                          | Turn each setting on or off                        |
+
+- The settings are whether raters see the models after each vote and whether the leaderboard is public. Both are on by default.
+- Each vote records whether its rater was seeing the models after each vote, because that can't be worked out later and it affects how far the vote can be trusted.
+- Excluding a vote stores a reason and date, and the leaderboard leaves the vote out. Nothing is deleted. The reasons are included in the CSV.
+- Pausing a model stops it appearing in new comparisons and keeps its past votes.
+- Left for later: results by item or tag, rating history, and editing model details.
+
+**Still to decide**
+
+- Whether the HF dataset is public or private. This doesn't affect the code.
+- Where to deploy: Vercel is the likely choice, with an HF Space or a server as alternatives. The app should stay portable until then, so it shouldn't rely on a long-running process, such as loading `dataset.jsonl` once at startup or running `ffmpeg` on each request.
+- Free-plan limits to recheck before deploying, as of 2026-11. Supabase has a 500 MB database, pauses projects after a week of inactivity and has no automatic backups, so votes should be exported regularly. Vercel's Hobby plan is for non-commercial, personal use and limits responses to 4.5 MB. The largest current clip is 1.67 MB as a WAV.
+- A stricter voting round for a paper: models hidden, leaderboard hidden, exclusion rules written beforehand, raters' Ukrainian checked, and analysis limited to that round's votes. Votes collected under the default settings aren't blind, and the main rater is also the admin.
 
 ## Changes to the existing repo
 
