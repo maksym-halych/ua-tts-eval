@@ -6,11 +6,11 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from ua_tts_bench.audio import read_wav, resample, to_wav_bytes
-from ua_tts_bench.dataset import load_dataset
-from ua_tts_bench.output import FORMAT_VERSION, bench_log, utc_now, write_json
-from ua_tts_bench.provenance import package_commit
-from ua_tts_bench.text import cer, normalize, wer
+from ua_tts_eval.audio import read_wav, resample, to_wav_bytes
+from ua_tts_eval.dataset import load_dataset
+from ua_tts_eval.output import FORMAT_VERSION, bench_log, utc_now, write_json
+from ua_tts_eval.provenance import package_commit
+from ua_tts_eval.text import cer, normalize, wer
 
 ASR_SAMPLE_RATE = 16000
 
@@ -73,7 +73,7 @@ def evaluate(folder: Path, asr_base_url: str, asr_model: str) -> None:
             "format_version": FORMAT_VERSION,
             "evaluated_at": evaluated_at,
             "dataset_md5": dataset.md5,
-            "ua-tts-bench": {"commit": package_commit()},
+            "ua-tts-eval": {"commit": package_commit()},
             "asr": asr_model,
             "items": items,
         },

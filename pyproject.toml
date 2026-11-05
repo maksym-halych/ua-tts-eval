@@ -1,5 +1,5 @@
 [project]
-name = "ua-tts-bench"
+name = "ua-tts-eval"
 version = "0.1.0"
 description = "Benchmark for Ukrainian text-to-speech models"
 readme = "README.md"

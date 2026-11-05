@@ -35,7 +35,7 @@ def model_source(folder: Path) -> dict:
 def package_commit() -> str | None:
     """Commit of the installed package, from the record pip and uv keep of where it was installed from."""
     try:
-        origin = metadata.distribution("ua-tts-bench").read_text("direct_url.json")
+        origin = metadata.distribution("ua-tts-eval").read_text("direct_url.json")
     except metadata.PackageNotFoundError:
         return None
     if not origin:

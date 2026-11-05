@@ -7,17 +7,17 @@ import sys
 import time
 from pathlib import Path
 
-from ua_tts_bench.audio import count_clipped, to_mono, to_wav_bytes
-from ua_tts_bench.dataset import load_dataset
-from ua_tts_bench.model import TtsModel
-from ua_tts_bench.output import (
+from ua_tts_eval.audio import count_clipped, to_mono, to_wav_bytes
+from ua_tts_eval.dataset import load_dataset
+from ua_tts_eval.model import TtsModel
+from ua_tts_eval.output import (
     FORMAT_VERSION,
     OUTPUT_ROOT,
     bench_log,
     utc_now,
     write_json,
 )
-from ua_tts_bench.provenance import hardware, model_source, package_commit
+from ua_tts_eval.provenance import hardware, model_source, package_commit
 
 # The first character excludes "." and "..", which would make generate delete a parent folder.
 VALID_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -41,7 +41,7 @@ def generate(model: TtsModel) -> Path:
         "format_version": FORMAT_VERSION,
         "generated_at": utc_now(),
         "dataset_md5": dataset.md5,
-        "ua-tts-bench": {"commit": package_commit()},
+        "ua-tts-eval": {"commit": package_commit()},
         "model": {**source, "params": model.params},
         "device": model.device,
         "hardware": hardware(),

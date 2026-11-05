@@ -1,4 +1,4 @@
-# ua-tts-bench design
+# ua-tts-eval design
 
 Status: the package and the path changes are implemented. `ua-tts-arena` is implemented and runs locally. It is not deployed yet.
 
@@ -8,12 +8,15 @@ The project evaluates Ukrainian text-to-speech models on a fixed dataset, using 
 
 | Part                   | Where                   | Role                                                     |
 | ---------------------- | ----------------------- | -------------------------------------------------------- |
-| `ua-tts-bench` package | this repo               | Ships the dataset, generates audio, computes metrics     |
+| `ua-tts-eval` package  | this repo               | Ships the dataset, generates audio, computes metrics     |
+| `ua-tts-bench`         | separate repo           | Adapter scripts, one for each model                      |
 | `ua-tts-bench` dataset | Hugging Face            | Stores generated audio and metrics, one folder per model |
 | `ua-tts-arena`         | separate repo           | Human voting and the leaderboard                         |
 
+The three repos are in one `ua-tts-benchmark` folder, next to each other.
+
 ```
-model repo + adapter script
+ua-tts-bench adapter script
    ├─ generate() ─▶ audio + manifest.json
    ├─ evaluate() ─▶ metrics.json
    ├─ export_mp3() ─▶ MP3 copies
@@ -22,11 +25,10 @@ model repo + adapter script
 
 Model code never lives in this repo. Only the maintainer adds models to the leaderboard, in these steps:
 
-1. Clone the model's repo.
-2. Install this package there and add an adapter script that subclasses `TtsModel`.
-3. Run the script, which generates audio, computes metrics and makes MP3 copies.
-4. Upload the resulting folder to the HF dataset.
-5. Add the model on the arena's Models admin page. Until then, it isn't available to raters.
+1. Add an adapter script to `ua-tts-bench` that subclasses `TtsModel`. The script declares the model's packages and this package as its dependencies.
+2. Run the script, which generates audio, computes metrics and makes MP3 copies.
+3. Upload the resulting folder to the HF dataset.
+4. Add the model on the arena's Models admin page. Until then, it isn't available to raters.
 
 ## v1 scope
 
@@ -54,7 +56,7 @@ Model code never lives in this repo. Only the maintainer adds models to the lead
 - `export_mp3` needs `ffmpeg` on `PATH`. `generate` and `evaluate` don't.
 
 ```bash
-uv pip install git+https://github.com/maksym-halych/ua-tts-bench
+uv pip install git+https://github.com/maksym-halych/ua-tts-eval
 ```
 
 ### Public API
@@ -89,7 +91,7 @@ Choosing a voice is up to the adapter. A fixed voice can be recorded in `params`
 
 ### `generate(model)`
 
-1. Deletes `.cache/ua-tts-bench/<name>/` relative to the current directory, if it exists, and creates it again. Every generation starts clean.
+1. Deletes `.cache/ua-tts-eval/<name>/` relative to the current directory, if it exists, and creates it again. Every generation starts clean.
 2. Copies the script that called it to `adapter.py`.
 3. Calls `synthesize(item.text)` for every dataset item and times each call.
 4. Writes each result to `audio/<id>.wav`.
@@ -150,7 +152,7 @@ Digits are not converted to words, and Latin script is not converted to Cyrillic
 
 ## Dataset
 
-- The file moves to `src/ua_tts_bench/data/dataset.jsonl` and ships inside the package.
+- The file moves to `src/ua_tts_eval/data/dataset.jsonl` and ships inside the package.
 - An item's `id` is the first 12 hex characters of the md5 of its text.
 - The dataset version is the md5 of the file. There are no `v1`/`v2` labels.
 - `manifest.json` and `metrics.json` each record `dataset_md5`. They can differ, because `evaluate` may run later with a newer dataset.
@@ -160,7 +162,7 @@ Digits are not converted to words, and Latin script is not converted to Cyrillic
 Fields are kept to the minimum. Adding a field later is easy, while removing one breaks whatever reads it, so a field needs a concrete current use.
 
 ```
-.cache/ua-tts-bench/            relative to cwd; maps to the root of the HF dataset
+.cache/ua-tts-eval/             relative to cwd; maps to the root of the HF dataset
 └── holos/                      one folder per model, named after TtsModel.name
     ├── manifest.json           how the audio was generated (written by generate)
     ├── metrics.json            metrics (fully rewritten by each evaluate)
@@ -176,7 +178,7 @@ Fields are kept to the minimum. Adding a field later is easy, while removing one
         └── ...
 ```
 
-Each model is generated in its own clone, so locally there is usually one folder. The HF dataset collects all of them.
+The adapter scripts in `ua-tts-bench` all write to the same folder, so it can contain several models. The HF dataset collects all of them.
 
 Values in the examples below are illustrative.
 
@@ -187,9 +189,9 @@ Values in the examples below are illustrative.
   "format_version": 1,
   "generated_at": "2026-11-02T14:03:10Z",
   "dataset_md5": "5d41402abc4b2a76b9719d911017c592",
-  "ua-tts-bench": { "commit": "c99d2f2" },
+  "ua-tts-eval": { "commit": "c99d2f2" },
   "model": {
-    "repo": "https://github.com/example/holos",
+    "repo": "https://github.com/maksym-halych/ua-tts-bench",
     "commit": "9f2c1ab",
     "params": { "checkpoint": "holos-1.2", "voice": "anna", "temperature": 0.7, "seed": 42 }
   },
@@ -210,7 +212,7 @@ Values in the examples below are illustrative.
 | Field                         | Meaning                                                                                                             |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `generated_at`                | When generation started                                                                                             |
-| `ua-tts-bench.commit`         | Commit of the installed package, `null` if unknown                                                                  |
+| `ua-tts-eval.commit`          | Commit of the installed package, `null` if unknown                                                                  |
 | `model.repo`, `model.commit`  | Read from git in the adapter script's folder, `null` outside a git repo. Credentials in the remote URL are dropped. |
 | `model.params`                | Copy of `TtsModel.params`                                                                                           |
 | `device`                      | Copy of `TtsModel.device`. `hardware` only describes the machine, not what the model ran on.                        |
@@ -226,7 +228,7 @@ There is no model version field. The commit identifies the code, a checkpoint go
   "format_version": 1,
   "evaluated_at": "2026-11-02T18:40:00Z",
   "dataset_md5": "5d41402abc4b2a76b9719d911017c592",
-  "ua-tts-bench": { "commit": "c99d2f2" },
+  "ua-tts-eval": { "commit": "c99d2f2" },
   "asr": "parakeet-tdt-0.6b-v3",
   "items": {
     "a4f076a8e050": {
@@ -256,11 +258,11 @@ There is no model version field. The commit identifies the code, a checkpoint go
 
 ### `adapter.py`
 
-Lives in the model's repo and is copied into the folder by `generate`, so the result stays reproducible after the clone is gone.
+Lives in the `ua-tts-bench` repo and is copied into the folder by `generate`, so the result stays reproducible if the script changes later.
 
 ```python
 from holos import load_model
-from ua_tts_bench import TtsModel, evaluate, export_mp3, generate
+from ua_tts_eval import TtsModel, evaluate, export_mp3, generate
 
 
 class HolosTtsModel(TtsModel):
@@ -309,7 +311,7 @@ export_mp3(folder)
 The upload is a plain CLI command, with no code in the package:
 
 ```bash
-hf upload <user>/ua-tts-bench .cache/ua-tts-bench/holos holos --repo-type dataset
+hf upload <user>/ua-tts-bench .cache/ua-tts-eval/holos holos --repo-type dataset
 ```
 
 - Upload a folder only after every item was generated. The log shows the count of failed items.

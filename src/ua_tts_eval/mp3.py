@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ua_tts_bench.output import bench_log
+from ua_tts_eval.output import bench_log
 
 TARGET_LUFS = -23.0
 MAX_TRUE_PEAK_DBTP = -1.0

@@ -27,7 +27,7 @@ jobs:
         run: |
           mkdir -p _site
           cp -r site/. _site/
-          cp src/ua_tts_bench/data/dataset.jsonl _site/dataset.jsonl
+          cp src/ua_tts_eval/data/dataset.jsonl _site/dataset.jsonl
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

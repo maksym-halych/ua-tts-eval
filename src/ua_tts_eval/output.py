@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 FORMAT_VERSION = 1
-OUTPUT_ROOT = Path(".cache/ua-tts-bench")
+OUTPUT_ROOT = Path(".cache/ua-tts-eval")
 
-_logger = logging.getLogger("ua_tts_bench")
+_logger = logging.getLogger("ua_tts_eval")
 
 
 def utc_now() -> str:
