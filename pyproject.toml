@@ -3,6 +3,8 @@ name = "ua-tts-eval"
 version = "0.1.0"
 description = "Benchmark for Ukrainian text-to-speech models"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "MaksymHalych", email = "maksym.halych.24@gmail.com" }
 ]
